@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Mint OS — mint-nexus  |  Unified Control Center (CLI frontend)
+# One command to access all system controls
+# Full GUI version planned as Qt/QML app in Phase 2
+# =============================================================================
+set -euo pipefail
+
+MINT='\033[38;2;46;203;113m'; BOLD='\033[1m'; NC='\033[0m'
+CYAN='\033[0;36m'; DIM='\033[2m'; YELLOW='\033[1;33m'
+
+banner() {
+    clear
+    echo -e "${MINT}${BOLD}"
+    echo "  ╔═══════════════════════════════════════════════════════════╗"
+    echo "  ║   Mint Nexus  —  Unified Control Center                  ║"
+    echo "  ╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+sys_summary() {
+    local cpu_pct
+    cpu_pct=$(top -bn1 | grep "Cpu(s)" | awk '{print int($2)}' 2>/dev/null || echo "?")
+    local mem_pct
+    mem_pct=$(free | awk '/Mem:/{printf "%.0f", $3/$2*100}' 2>/dev/null || echo "?")
+    local disk_pct
+    disk_pct=$(df / | awk 'NR==2{print int($5)}' | tr -d '%' 2>/dev/null || echo "?")
+    local channel
+    channel=$(grep "^channel" /etc/mint-os/mint-os.conf 2>/dev/null | awk '{print $3}' || echo "stable")
+    local profile
+    profile=$(cat /var/lib/mint-adaptive/current-profile 2>/dev/null || echo "normal")
+
+    printf "  ${DIM}CPU %-4s%%  RAM %-4s%%  Disk %-4s%%  Channel: %-8s  Profile: %s${NC}\n" \
+        "$cpu_pct" "$mem_pct" "$disk_pct" "$channel" "$profile"
+    echo ""
+}
+
+menu_main() {
+    while true; do
+        banner
+        sys_summary
+        echo "  ${BOLD}System Controls${NC}"
+        echo ""
+        echo "  1)  System       — hardware, performance, power"
+        echo "  2)  Updates      — check updates, channels, changelog"
+        echo "  3)  Privacy      — firewall, AppArmor, DNS, telemetry"
+        echo "  4)  Security     — AppArmor, SSH, audit log"
+        echo "  5)  Gaming       — gaming mode, Steam, FPS overlay"
+        echo "  6)  Developer    — Docker, SSH keys, environments"
+        echo "  7)  Appearance   — themes, animations, blur"
+        echo "  8)  AI Settings  — model, privacy, watch mode"
+        echo "  9)  Recovery     — snapshots, rollback, boot repair"
+        echo "  0)  Live Dash    — real-time system telemetry"
+        echo "  D)  Doctor       — full system diagnostics"
+        echo "  Q)  Quit"
+        echo ""
+        read -r -p "  [1-9/0/D/Q]: " choice
+        case "$choice" in
+            1) menu_system ;;
+            2) sudo mint-update --check; read -r -p "Press Enter..."; ;;
+            3) sudo mint-privacy-center ;;
+            4) sudo mint-privacy-center --audit; read -r -p "Press Enter..."; ;;
+            5) menu_gaming ;;
+            6) menu_developer ;;
+            7) menu_appearance ;;
+            8) menu_ai ;;
+            9) sudo mint-rollback ;;
+            0) mint-dash ;;
+            [Dd]) sudo mint-doctor; read -r -p "Press Enter..."; ;;
+            [Qq]) echo -e "${MINT}Goodbye.${NC}"; exit 0 ;;
+        esac
+    done
+}
+
+menu_system() {
+    banner
+    echo -e "  ${BOLD}${CYAN}System${NC}"
+    echo ""
+    echo "  1) Performance profile   [$(cat /var/lib/mint-adaptive/current-profile 2>/dev/null || echo normal)]"
+    echo "  2) Hardware info"
+    echo "  3) Optimize system"
+    echo "  4) Driver manager"
+    echo "  5) Clean disk"
+    echo "  6) System health"
+    echo "  B) Back"
+    echo ""
+    read -r -p "  Choice: " c
+    case "$c" in
+        1) sudo mint-optimizer; read -r -p "Press Enter..."; ;;
+        2) sudo mint-hardware; read -r -p "Press Enter..."; ;;
+        3) sudo mint-optimizer --balanced; read -r -p "Press Enter..."; ;;
+        4) sudo mint-driver-manager ;;
+        5) sudo mint-clean ;;
+        6) sudo mint-health; read -r -p "Press Enter..."; ;;
+        [Bb]) return ;;
+    esac
+}
+
+menu_gaming() {
+    banner
+    echo -e "  ${BOLD}${CYAN}Gaming${NC}"
+    echo ""
+    local gm_status
+    [[ -f /tmp/mint-gaming-mode-active ]] && gm_status="${MINT}ACTIVE${NC}" || gm_status="${DIM}inactive${NC}"
+    echo -e "  Gaming mode: $gm_status"
+    echo ""
+    echo "  1) Toggle gaming mode"
+    echo "  2) Install gaming support (Steam, Proton, Wine)"
+    echo "  3) Configure MangoHud"
+    echo "  4) Gaming optimizer settings"
+    echo "  B) Back"
+    echo ""
+    read -r -p "  Choice: " c
+    case "$c" in
+        1) sudo mint-gaming-mode --toggle; read -r -p "Press Enter..."; ;;
+        2) sudo mint-gaming ;;
+        3) echo "Edit: /etc/mint-os/mint-os.conf → [gaming] section"; read -r -p "Press Enter..."; ;;
+        4) sudo mint-optimizer --gaming; read -r -p "Press Enter..."; ;;
+        [Bb]) return ;;
+    esac
+}
+
+menu_developer() {
+    banner
+    echo -e "  ${BOLD}${CYAN}Developer Tools${NC}"
+    echo ""
+    command -v docker  &>/dev/null && docker_v=$(docker --version | cut -d' ' -f3 | tr -d ',') || docker_v="not installed"
+    command -v git     &>/dev/null && git_v=$(git --version | cut -d' ' -f3) || git_v="not installed"
+    command -v python3 &>/dev/null && py_v=$(python3 --version | cut -d' ' -f2) || py_v="not installed"
+    command -v node    &>/dev/null && node_v=$(node --version) || node_v="not installed"
+    command -v paru    &>/dev/null && aur_v="paru $(paru --version | head -1 | awk '{print $2}')" || aur_v="not installed"
+
+    echo "  Docker:  $docker_v"
+    echo "  Git:     $git_v"
+    echo "  Python:  $py_v"
+    echo "  Node.js: $node_v"
+    echo "  AUR:     $aur_v"
+    echo ""
+    echo "  1) Start/stop Docker"
+    echo "  2) Setup AUR helper (paru)"
+    echo "  3) Open dev environment"
+    echo "  B) Back"
+    echo ""
+    read -r -p "  Choice: " c
+    case "$c" in
+        1) sudo systemctl toggle docker; read -r -p "Press Enter..."; ;;
+        2) mint-setup-aur ;;
+        3) konsole --profile "Mint OS" 2>/dev/null || xterm & ;;
+        [Bb]) return ;;
+    esac
+}
+
+menu_appearance() {
+    banner
+    echo -e "  ${BOLD}${CYAN}Appearance${NC}"
+    echo ""
+    echo "  Current theme: Mint OS Dark (Kvantum)"
+    echo ""
+    echo "  1) Apply Mint OS dark theme"
+    echo "  2) Configure blur strength"
+    echo "  3) Configure animations"
+    echo "  4) Open KDE System Settings"
+    echo "  B) Back"
+    echo ""
+    read -r -p "  Choice: " c
+    case "$c" in
+        1) kvantummanager --set MintOS 2>/dev/null && plasma-apply-colorscheme MintOSDark 2>/dev/null; \
+           echo "Theme applied."; read -r -p "Press Enter..."; ;;
+        2) echo "Edit blur in KWin settings or /etc/kwin/mintos-kwinrc"; read -r -p "Press Enter..."; ;;
+        3) echo "Edit: /etc/kwin/mintos-kwinrc → [Compositing] AnimationSpeed"; read -r -p "Press Enter..."; ;;
+        4) systemsettings5 2>/dev/null & ;;
+        [Bb]) return ;;
+    esac
+}
+
+menu_ai() {
+    banner
+    echo -e "  ${BOLD}${CYAN}AI Settings${NC}"
+    echo ""
+    local ai_backend
+    ai_backend=$(grep "^ai_backend" /etc/mint-os/mint-os.conf 2>/dev/null | awk '{print $3}' || echo "rules")
+    echo "  Current AI backend: $ai_backend"
+    command -v ollama &>/dev/null && echo "  Ollama: installed ($(ollama list 2>/dev/null | tail -n +2 | wc -l) models)" || echo "  Ollama: not installed"
+    echo ""
+    echo "  1) Run AI system analysis"
+    echo "  2) Ask AI a question"
+    echo "  3) Enable ambient AI watch mode"
+    echo "  4) AI suggestions"
+    echo "  5) Install Ollama (enables full AI)"
+    echo "  B) Back"
+    echo ""
+    read -r -p "  Choice: " c
+    case "$c" in
+        1) mint-ai analyze; read -r -p "Press Enter..."; ;;
+        2) read -r -p "  Ask: " q; mint-ai ask "$q"; read -r -p "Press Enter..."; ;;
+        3) mint-ai watch ;;
+        4) mint-ai suggest; read -r -p "Press Enter..."; ;;
+        5) echo "Installing Ollama..."; curl -fsSL https://ollama.com/install.sh | sh && \
+           echo "Run: ollama pull mistral"; read -r -p "Press Enter..."; ;;
+        [Bb]) return ;;
+    esac
+}
+
+main() {
+    case "${1:-menu}" in
+        menu|*) menu_main ;;
+    esac
+}
+
+main "$@"
