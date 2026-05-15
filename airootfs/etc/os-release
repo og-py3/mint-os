@@ -1,0 +1,11 @@
+NAME="Mint OS"
+PRETTY_NAME="Mint OS (Rolling)"
+ID=mintos
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="1;32"
+HOME_URL="https://github.com/mintos"
+DOCUMENTATION_URL="https://github.com/mintos/wiki"
+SUPPORT_URL="https://github.com/mintos/issues"
+BUG_REPORT_URL="https://github.com/mintos/issues"
+LOGO=mintos-logo
