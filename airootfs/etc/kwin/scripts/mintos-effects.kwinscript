@@ -1,0 +1,138 @@
+// =============================================================================
+// Mint OS — KWin Script: Advanced Effects & Animations
+// Glassmorphism windows, mint-green glow on focus, smooth workspace transitions
+// =============================================================================
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+var config = {
+    // Blur
+    blurRadius: 40,
+    blurStrength: 8,
+
+    // Glow on focused window
+    glowColor: Qt.rgba(0.18, 0.796, 0.443, 0.3),  // mint-green 30% opacity
+    glowSize: 12,
+
+    // Animations (ms)
+    windowOpenDuration: 180,
+    windowCloseDuration: 140,
+    workspaceSwitchDuration: 220,
+
+    // Dim inactive windows
+    dimInactive: true,
+    dimStrength: 0.08,
+};
+
+// ── Window Open Animation ──────────────────────────────────────────────────────
+effects.windowAdded.connect(function(window) {
+    if (window.skipAnimation) return;
+    if (window.desktopWindow || window.dock) return;
+
+    animate({
+        window: window,
+        curve: QEasingCurve.OutBack,
+        duration: config.windowOpenDuration,
+        animations: [{
+            type: Effect.Scale,
+            from: 0.96,
+            to: 1.0,
+        }, {
+            type: Effect.Opacity,
+            from: 0.0,
+            to: 1.0,
+            curve: QEasingCurve.OutCubic,
+        }]
+    });
+});
+
+// ── Window Close Animation ────────────────────────────────────────────────────
+effects.windowClosed.connect(function(window) {
+    if (window.skipAnimation) return;
+    if (window.desktopWindow || window.dock) return;
+
+    animate({
+        window: window,
+        curve: QEasingCurve.InCubic,
+        duration: config.windowCloseDuration,
+        animations: [{
+            type: Effect.Scale,
+            to: 0.96,
+        }, {
+            type: Effect.Opacity,
+            to: 0.0,
+        }]
+    });
+});
+
+// ── Focus Change: Mint Glow ───────────────────────────────────────────────────
+effects.windowActivated.connect(function(window) {
+    if (!window || window.desktopWindow) return;
+
+    // Animate brightness pulse on focus
+    animate({
+        window: window,
+        duration: 120,
+        animations: [{
+            type: Effect.Brightness,
+            from: 1.0,
+            to: 1.06,
+            curve: QEasingCurve.OutCubic,
+        }]
+    });
+
+    // Return to normal
+    animate({
+        window: window,
+        duration: 200,
+        delay: 120,
+        animations: [{
+            type: Effect.Brightness,
+            from: 1.06,
+            to: 1.0,
+        }]
+    });
+});
+
+// ── Minimize Animation: Genie to Taskbar ─────────────────────────────────────
+effects.windowMinimized.connect(function(window) {
+    if (window.skipAnimation) return;
+
+    animate({
+        window: window,
+        curve: QEasingCurve.InCubic,
+        duration: 250,
+        animations: [{
+            type: Effect.Scale,
+            to: 0.3,
+        }, {
+            type: Effect.Opacity,
+            to: 0.0,
+        }, {
+            type: Effect.Translation,
+            to: {x: 0, y: 200},
+        }]
+    });
+});
+
+effects.windowUnminimized.connect(function(window) {
+    animate({
+        window: window,
+        curve: QEasingCurve.OutBack,
+        duration: 250,
+        animations: [{
+            type: Effect.Scale,
+            from: 0.3,
+            to: 1.0,
+        }, {
+            type: Effect.Opacity,
+            from: 0.0,
+            to: 1.0,
+        }, {
+            type: Effect.Translation,
+            from: {x: 0, y: 200},
+            to: {x: 0, y: 0},
+        }]
+    });
+});
+
+print("Mint OS KWin effects loaded.");
