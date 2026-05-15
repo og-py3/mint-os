@@ -1,0 +1,36 @@
+# =============================================================================
+# Mint OS — Calamares Installer Branding
+# =============================================================================
+
+componentName: mintos
+
+welcomeStyleCalamares: false
+welcomeExpandingLogo: true
+
+strings:
+    productName:         "Mint OS"
+    shortProductName:    "Mint OS"
+    version:             "Rolling"
+    shortVersion:        "Rolling"
+    versionedName:       "Mint OS Rolling"
+    shortVersionedName:  "Mint OS"
+    bootloaderEntryName: "Mint OS"
+    productUrl:          "https://github.com/mintos"
+    supportUrl:          "https://github.com/mintos/issues"
+    knownIssuesUrl:      "https://github.com/mintos/issues"
+    releaseNotesUrl:     "https://github.com/mintos/releases"
+
+images:
+    productLogo:         "logo.png"
+    productIcon:         "logo.png"
+    productWelcome:     "welcome.png"
+
+slideshow:              "show.qml"
+
+slideshowAPI: 2
+
+style:
+    sidebarBackground:    "#0d160d"
+    sidebarText:          "#c8d8c8"
+    sidebarTextSelect:    "#ffffff"
+    sidebarTextHighlight: "#2ecb71"
