@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Mint OS
+Description=Mint OS boot splash — dark with mint-green pulse animation
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/mintos
+ScriptFile=/usr/share/plymouth/themes/mintos/mintos.script
