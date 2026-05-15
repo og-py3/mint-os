@@ -1,0 +1,435 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Mint OS — mint-ai  |  Intelligent system assistant
+# Phase 1: Rule-based engine (no LLM required, fully offline)
+# Phase 2: Ollama integration (if installed)
+# =============================================================================
+set -euo pipefail
+
+MINT='\033[38;2;46;203;113m'; BOLD='\033[1m'; NC='\033[0m'
+CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; DIM='\033[2m'
+LOG_DIR="/var/log/mint-os"; mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/mint-ai-$(date +%Y%m%d).log"
+AI_STATE_DIR="/var/lib/mint-ai"; mkdir -p "$AI_STATE_DIR" 2>/dev/null || true
+USER_STATE_DIR="${HOME}/.local/share/mint-ai"; mkdir -p "$USER_STATE_DIR"
+CONTEXT_FILE="$USER_STATE_DIR/context.json"
+HISTORY_FILE="$USER_STATE_DIR/history.log"
+VERSION="1.0.0-rule-engine"
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+think()   { echo -e "${MINT}${BOLD}[AI]${NC} $*" | tee -a "$LOG"; }
+warn()    { echo -e "${YELLOW}[AI]${NC} $*" | tee -a "$LOG"; }
+error()   { echo -e "${RED}[AI]${NC} $*" | tee -a "$LOG"; }
+suggest() { echo -e "${CYAN}  → ${NC}$*"; }
+log_cmd() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$HISTORY_FILE"; }
+
+banner() {
+    clear
+    echo -e "${MINT}${BOLD}"
+    echo "  ╔══════════════════════════════════════════════════╗"
+    echo "  ║   Mint OS AI Assistant  v${VERSION}          ║"
+    echo "  ║   Fully offline · No telemetry · System-aware   ║"
+    echo "  ╚══════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+# ── System Context Collector ──────────────────────────────────────────────────
+gather_context() {
+    local ctx="{}"
+
+    CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print int($2)}' 2>/dev/null || echo "0")
+    MEM_PCT=$(free | awk '/Mem:/{printf "%.0f", $3/$2*100}' 2>/dev/null || echo "0")
+    DISK_ROOT=$(df / | awk 'NR==2{print int($5)}' | tr -d '%' 2>/dev/null || echo "0")
+    LOAD=$(cat /proc/loadavg | awk '{print $1}' 2>/dev/null || echo "0")
+    CORES=$(nproc 2>/dev/null || echo "1")
+    TEMP=$(sensors 2>/dev/null | grep -E "Core 0|Package|Tctl" | head -1 | grep -o '+[0-9]*\.' | head -1 | tr -d '+.' || echo "0")
+    UPTIME_SEC=$(cat /proc/uptime | awk '{print int($1)}' 2>/dev/null || echo "0")
+    SWAP_USED=$(free | awk '/Swap:/{if($2>0) printf "%.0f", $3/$2*100; else print 0}' 2>/dev/null || echo "0")
+    PENDING_UPDATES=$(checkupdates 2>/dev/null | wc -l || echo "0")
+    FAILED_SERVICES=$(systemctl list-units --state=failed --no-legend 2>/dev/null | wc -l || echo "0")
+    DISK_INODE=$(df -i / | awk 'NR==2{print int($5)}' | tr -d '%' 2>/dev/null || echo "0")
+    JOURNAL_ERRORS=$(journalctl -p err --since "1h ago" --no-pager -q 2>/dev/null | wc -l || echo "0")
+
+    cat > "$CONTEXT_FILE" <<JSON
+{
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "cpu_usage": $CPU_USAGE,
+  "mem_pct": $MEM_PCT,
+  "disk_root_pct": $DISK_ROOT,
+  "disk_inode_pct": $DISK_INODE,
+  "load_avg": "$LOAD",
+  "cpu_cores": $CORES,
+  "cpu_temp": $TEMP,
+  "uptime_sec": $UPTIME_SEC,
+  "swap_used_pct": $SWAP_USED,
+  "pending_updates": $PENDING_UPDATES,
+  "failed_services": $FAILED_SERVICES,
+  "journal_errors_1h": $JOURNAL_ERRORS
+}
+JSON
+}
+
+# ── Rule Engine ────────────────────────────────────────────────────────────────
+analyze_system() {
+    local issues=0
+
+    echo -e "${BOLD}${CYAN}System Analysis${NC}"
+    echo ""
+
+    # CPU
+    if (( CPU_USAGE > 90 )); then
+        warn "CPU critically high: ${CPU_USAGE}%"
+        suggest "top processes: $(ps aux --sort=-%cpu | awk 'NR>1{print $11}' | head -3 | tr '\n' ', ')"
+        suggest "Consider: sudo mint-optimizer --performance"
+        (( issues++ ))
+    elif (( CPU_USAGE > 70 )); then
+        warn "CPU elevated: ${CPU_USAGE}%"
+        (( issues++ ))
+    else
+        echo -e "  ${MINT}✓${NC} CPU normal: ${CPU_USAGE}%"
+    fi
+
+    # Memory
+    if (( MEM_PCT > 90 )); then
+        warn "RAM critically full: ${MEM_PCT}%"
+        suggest "Top RAM users: $(ps aux --sort=-%mem | awk 'NR>1{print $11}' | head -3 | tr '\n' ', ')"
+        suggest "Free RAM: sudo sync && sudo sysctl vm.drop_caches=3"
+        (( issues++ ))
+    elif (( MEM_PCT > 80 )); then
+        warn "RAM usage high: ${MEM_PCT}%"
+        (( issues++ ))
+    else
+        echo -e "  ${MINT}✓${NC} RAM healthy: ${MEM_PCT}%"
+    fi
+
+    # Temperature
+    if (( TEMP > 90 )); then
+        error "CPU temperature CRITICAL: ${TEMP}°C — risk of throttling!"
+        suggest "Check fans: sensors | grep fan"
+        suggest "Clean thermal paste if hardware is >2 years old"
+        (( issues++ ))
+    elif (( TEMP > 75 )); then
+        warn "CPU temperature warm: ${TEMP}°C"
+        suggest "sudo mint-optimizer --balanced  (reduces heat)"
+        (( issues++ ))
+    elif (( TEMP > 0 )); then
+        echo -e "  ${MINT}✓${NC} Temperature normal: ${TEMP}°C"
+    fi
+
+    # Disk
+    if (( DISK_ROOT > 95 )); then
+        error "Disk critically full: ${DISK_ROOT}% — system may stop working!"
+        suggest "Run NOW: sudo mint-clean"
+        suggest "Find large files: ncdu /"
+        (( issues++ ))
+    elif (( DISK_ROOT > 85 )); then
+        warn "Disk getting full: ${DISK_ROOT}%"
+        suggest "sudo mint-clean  (frees pacman cache, logs, orphans)"
+        (( issues++ ))
+    else
+        echo -e "  ${MINT}✓${NC} Disk healthy: ${DISK_ROOT}%"
+    fi
+
+    # Updates
+    if (( PENDING_UPDATES > 100 )); then
+        warn "System very outdated: $PENDING_UPDATES pending updates"
+        suggest "sudo mint-update  (auto-snapshots first)"
+        (( issues++ ))
+    elif (( PENDING_UPDATES > 0 )); then
+        echo -e "  ${YELLOW}○${NC} $PENDING_UPDATES updates available"
+    else
+        echo -e "  ${MINT}✓${NC} System up to date"
+    fi
+
+    # Failed services
+    if (( FAILED_SERVICES > 0 )); then
+        warn "$FAILED_SERVICES systemd service(s) failed"
+        suggest "See details: systemctl list-units --state=failed"
+        suggest "Auto-diagnose: sudo mint-doctor"
+        (( issues++ ))
+    else
+        echo -e "  ${MINT}✓${NC} All services running"
+    fi
+
+    # Journal errors
+    if (( JOURNAL_ERRORS > 50 )); then
+        warn "$JOURNAL_ERRORS errors in the last hour (unusual)"
+        suggest "View: sudo journalctl -p err --since '1h ago' | tail -20"
+        (( issues++ ))
+    fi
+
+    # Load average
+    local load_int
+    load_int=$(echo "$LOAD" | cut -d. -f1)
+    if (( load_int > CORES * 2 )); then
+        warn "System load very high: $LOAD (cores: $CORES)"
+        (( issues++ ))
+    fi
+
+    # Summary
+    echo ""
+    if (( issues == 0 )); then
+        think "System is healthy. No issues detected."
+    elif (( issues == 1 )); then
+        think "Found 1 issue. See suggestion above."
+    else
+        think "Found $issues issues. Prioritize the warnings above."
+    fi
+
+    return $issues
+}
+
+# ── Query Mode (ask a question) ────────────────────────────────────────────────
+query_mode() {
+    local question="$*"
+    log_cmd "QUERY: $question"
+    gather_context
+
+    echo -e "${MINT}[AI]${NC} Analyzing: \"$question\""
+    echo ""
+
+    # Rule-based NLP: detect intent by keywords
+    local q_lower
+    q_lower=$(echo "$question" | tr '[:upper:]' '[:lower:]')
+
+    if echo "$q_lower" | grep -qE "slow|lag|sluggish|performance"; then
+        think "Your system performance diagnosis:"
+        echo ""
+        echo -e "  CPU usage:    ${CPU_USAGE}%"
+        echo -e "  RAM usage:    ${MEM_PCT}%"
+        echo -e "  Load average: $LOAD (${CORES} cores)"
+        echo -e "  Temperature:  ${TEMP}°C"
+        echo ""
+        if (( CPU_USAGE > 70 || MEM_PCT > 80 )); then
+            suggest "Top CPU processes right now:"
+            ps aux --sort=-%cpu | awk 'NR>1 && NR<6{printf "    %-30s CPU: %s%%\n", $11, $3}'
+            echo ""
+            suggest "Apply performance profile: sudo mint-optimizer --performance"
+        elif (( TEMP > 75 )); then
+            suggest "Thermal throttling likely — CPU slows itself to cool down"
+            suggest "Check fans: sensors"
+            suggest "Try: sudo mint-optimizer --balanced (reduces heat)"
+        else
+            suggest "System looks normal. Check browser tabs — they're often the cause."
+            suggest "Try: sudo mint-gaming-mode for gaming, sudo mint-optimizer --performance for work"
+        fi
+
+    elif echo "$q_lower" | grep -qE "space|disk|full|storage"; then
+        think "Disk usage breakdown:"
+        df -h / /home 2>/dev/null | tail -n +2
+        echo ""
+        suggest "Quick clean: sudo mint-clean (safe, recovers pacman cache + logs)"
+        suggest "Find what's large: ncdu / (interactive disk analyzer)"
+        suggest "Pacman cache alone: du -sh /var/cache/pacman/pkg/"
+
+    elif echo "$q_lower" | grep -qE "update|upgrade|outdated"; then
+        think "Update status: $PENDING_UPDATES packages pending"
+        if (( PENDING_UPDATES > 0 )); then
+            checkupdates 2>/dev/null | head -10
+            echo ""
+            suggest "Safe update (creates snapshot first): sudo mint-update"
+            suggest "Preview only: sudo mint-update --check"
+        else
+            think "System is fully up to date."
+        fi
+
+    elif echo "$q_lower" | grep -qE "crash|error|fail|broken"; then
+        think "Error report for the last 24 hours:"
+        echo ""
+        journalctl -p err --since "24h ago" --no-pager -q 2>/dev/null | tail -15 || echo "  No critical errors found."
+        echo ""
+        suggest "Full diagnostics: sudo mint-doctor"
+        suggest "Service failures: systemctl list-units --state=failed"
+
+    elif echo "$q_lower" | grep -qE "ram|memory|swap"; then
+        think "Memory analysis:"
+        free -h
+        echo ""
+        suggest "Top memory users:"
+        ps aux --sort=-%mem | awk 'NR>1 && NR<6{printf "    %-30s RAM: %s%%\n", $11, $4}'
+        echo ""
+        if (( SWAP_USED > 50 )); then
+            suggest "Swap is ${SWAP_USED}% used — add more RAM or upgrade zram size"
+            suggest "Check zram: zramctl"
+        fi
+
+    elif echo "$q_lower" | grep -qE "network|wifi|internet|connection"; then
+        think "Network diagnostics:"
+        echo ""
+        ip addr show | grep -E "^[0-9]|inet " | head -10
+        echo ""
+        local ping_ms
+        ping_ms=$(ping -c 1 -W 2 8.8.8.8 2>/dev/null | grep -o 'time=.*ms' | head -1 || echo "timeout")
+        echo -e "  Internet latency: $ping_ms"
+        suggest "Full network diagnostics: sudo mint-doctor"
+        suggest "Reset connection: sudo systemctl restart NetworkManager"
+
+    elif echo "$q_lower" | grep -qE "battery|power|charge"; then
+        think "Power status:"
+        if [[ -d /sys/class/power_supply/BAT0 ]]; then
+            local bat_pct
+            bat_pct=$(cat /sys/class/power_supply/BAT0/capacity 2>/dev/null || echo "N/A")
+            local bat_status
+            bat_status=$(cat /sys/class/power_supply/BAT0/status 2>/dev/null || echo "Unknown")
+            echo -e "  Battery: ${bat_pct}% — $bat_status"
+            suggest "Optimize for battery: sudo mint-optimizer --battery"
+        else
+            think "No battery detected — desktop system or battery not detected."
+        fi
+
+    elif echo "$q_lower" | grep -qE "security|firewall|vulnerability|hack"; then
+        think "Security status:"
+        echo ""
+        ufw status 2>/dev/null | head -5 || echo "  UFW: not running"
+        aa-status 2>/dev/null | grep "profiles are in enforce" || echo "  AppArmor: status unknown"
+        echo ""
+        suggest "Full privacy hardening: sudo mint-privacy"
+        suggest "Security diagnostics: sudo mint-doctor"
+
+    elif echo "$q_lower" | grep -qE "help|what can you|commands"; then
+        show_help
+
+    elif command -v ollama &>/dev/null; then
+        # If Ollama is installed, use it with system context
+        think "Using local AI model (Ollama)..."
+        local system_ctx
+        system_ctx="You are Mint OS AI assistant. System context: CPU ${CPU_USAGE}%, RAM ${MEM_PCT}%, Disk ${DISK_ROOT}%, Temp ${TEMP}°C, Updates pending: ${PENDING_UPDATES}, Failed services: ${FAILED_SERVICES}. Answer concisely and give actionable Arch Linux / Mint OS commands."
+        ollama run mistral "$system_ctx\n\nUser: $question" 2>/dev/null || \
+        ollama run llama2 "$system_ctx\n\nUser: $question" 2>/dev/null || \
+            think "Ollama model not loaded. Run: ollama pull mistral"
+    else
+        think "I don't have a specific rule for that yet. Here's what I can analyze:"
+        echo ""
+        echo "  → ask 'why is my system slow'"
+        echo "  → ask 'how much disk space is left'"
+        echo "  → ask 'any updates available'"
+        echo "  → ask 'are there any errors'"
+        echo "  → ask 'how is my RAM'"
+        echo "  → ask 'check my network'"
+        echo ""
+        think "For AI-powered answers, install Ollama: curl -fsSL https://ollama.com/install.sh | sh"
+        think "Then run: ollama pull mistral"
+    fi
+}
+
+# ── Watch Mode ─────────────────────────────────────────────────────────────────
+watch_mode() {
+    think "Ambient watch mode enabled. Monitoring system every 60 seconds."
+    think "Press Ctrl+C to stop."
+    echo ""
+    while true; do
+        gather_context
+        local issues=0
+
+        # Silent checks — only alert on problems
+        (( CPU_USAGE > 90 ))   && warn "ALERT: CPU critically high: ${CPU_USAGE}%" && (( issues++ )) || true
+        (( MEM_PCT > 90 ))     && warn "ALERT: RAM critically full: ${MEM_PCT}%" && (( issues++ )) || true
+        (( TEMP > 90 ))        && error "ALERT: CPU temperature CRITICAL: ${TEMP}°C" && (( issues++ )) || true
+        (( DISK_ROOT > 95 ))   && error "ALERT: Disk nearly full: ${DISK_ROOT}%" && (( issues++ )) || true
+        (( FAILED_SERVICES > 0 )) && warn "ALERT: $FAILED_SERVICES service(s) failed" && (( issues++ )) || true
+
+        (( issues == 0 )) && echo -e "${DIM}[$(date +%H:%M:%S)] All good.${NC}"
+        sleep 60
+    done
+}
+
+# ── Suggest Mode ───────────────────────────────────────────────────────────────
+suggest_mode() {
+    gather_context
+    think "Personalized suggestions based on your system state:"
+    echo ""
+
+    # Smart package suggestions
+    echo -e "${BOLD}Software you might want:${NC}"
+    echo ""
+
+    # Check what's NOT installed and suggest based on context
+    ! command -v code &>/dev/null && ! command -v nvim &>/dev/null && \
+        suggest "Install a modern editor: sudo pacman -S neovim  OR  paru -S visual-studio-code-bin"
+    ! command -v docker &>/dev/null && \
+        suggest "Container support not found: sudo pacman -S docker && sudo systemctl enable --now docker"
+    ! command -v paru &>/dev/null && ! command -v yay &>/dev/null && \
+        suggest "No AUR helper detected: mint-setup-aur  (unlocks thousands of extra packages)"
+    ! command -v steam &>/dev/null && \
+        suggest "Gaming support: sudo mint-gaming  (Steam, Proton, Wine, MangoHud)"
+    ! command -v ollama &>/dev/null && \
+        suggest "Enable full AI features: curl -fsSL https://ollama.com/install.sh | sh && ollama pull mistral"
+    command -v ollama &>/dev/null && ! ollama list 2>/dev/null | grep -q "mistral" && \
+        suggest "Download AI model: ollama pull mistral  (4GB, runs 100% offline)"
+
+    echo ""
+    echo -e "${BOLD}System improvements:${NC}"
+    echo ""
+    (( PENDING_UPDATES > 5 ))   && suggest "$PENDING_UPDATES updates pending: sudo mint-update"
+    (( DISK_ROOT > 75 ))        && suggest "Disk at ${DISK_ROOT}%: sudo mint-clean  (recovers space safely)"
+    (( MEM_PCT > 75 ))          && suggest "RAM at ${MEM_PCT}%: sudo mint-optimizer --zram  (compressed swap)"
+    (( UPTIME_SEC > 604800 ))   && suggest "System up for 7+ days: consider rebooting to apply kernel updates"
+    (( FAILED_SERVICES > 0 ))   && suggest "$FAILED_SERVICES failed services: sudo mint-doctor"
+
+    echo ""
+    think "Run 'mint-ai watch' to enable ambient background monitoring."
+}
+
+show_help() {
+    echo -e "${BOLD}${MINT}Mint OS AI — Commands${NC}"
+    echo ""
+    echo "  mint-ai                     — full system analysis"
+    echo "  mint-ai ask 'question'      — ask in plain English"
+    echo "  mint-ai watch               — ambient monitoring mode"
+    echo "  mint-ai suggest             — personalized recommendations"
+    echo "  mint-ai fix                 — auto-diagnose and offer fixes"
+    echo "  mint-ai context             — show current system context"
+    echo ""
+    echo -e "${DIM}Examples:${NC}"
+    echo "  mint-ai ask 'why is my computer slow'"
+    echo "  mint-ai ask 'how much disk space do I have'"
+    echo "  mint-ai ask 'are there any errors'"
+    echo "  mint-ai ask 'should I update'"
+    echo ""
+    echo -e "${DIM}Upgrade to full AI: install Ollama + mistral model${NC}"
+    echo "  curl -fsSL https://ollama.com/install.sh | sh"
+    echo "  ollama pull mistral"
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+main() {
+    case "${1:-analyze}" in
+        ask|query|-q)
+            shift
+            [[ $# -gt 0 ]] || { echo "Usage: mint-ai ask 'your question'"; exit 1; }
+            gather_context
+            query_mode "$@"
+            ;;
+        watch|-w|--watch)
+            gather_context
+            watch_mode
+            ;;
+        suggest|-s|--suggest)
+            gather_context
+            suggest_mode
+            ;;
+        fix|-f|--fix)
+            banner
+            gather_context
+            think "Running auto-fix analysis..."
+            echo ""
+            analyze_system
+            ;;
+        context|--context)
+            gather_context
+            cat "$CONTEXT_FILE" | python3 -m json.tool 2>/dev/null || cat "$CONTEXT_FILE"
+            ;;
+        help|-h|--help)
+            show_help
+            ;;
+        analyze|*)
+            banner
+            gather_context
+            analyze_system
+            echo ""
+            think "Type 'mint-ai ask <question>' to ask anything. Try 'mint-ai suggest' for recommendations."
+            ;;
+    esac
+}
+
+main "$@"
